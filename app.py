@@ -5,6 +5,7 @@ import base64
 import json
 from io import BytesIO
 import time
+import re
 
 # Page configuration
 st.set_page_config(
@@ -15,7 +16,7 @@ st.set_page_config(
 
 # Title and description
 st.title("🔍 SEO Keyword Research Tool")
-st.markdown("Upload a CSV or Excel file with keywords to fetch monthly search volume and keyword difficulty from DataForSEO")
+st.markdown("Upload a CSV or Excel file with keywords to fetch monthly search volume and competition data from DataForSEO")
 
 # Sidebar for API configuration
 st.sidebar.header("⚙️ Configuration")
@@ -79,6 +80,70 @@ def read_file(file):
         st.error(f"Error reading file: {str(e)}")
         return None
 
+def validate_and_clean_keywords(keywords_list, max_words=10):
+    """
+    Validate and clean keywords before sending to DataForSEO API
+    - Remove invalid characters (?, !, *, etc.)
+    - Skip keywords with too many words
+    - Track skipped keywords and reasons
+    """
+    valid_keywords = []
+    skipped_keywords = []
+
+    for keyword in keywords_list:
+        original_keyword = keyword
+
+        # Strip whitespace
+        keyword = keyword.strip()
+
+        # Skip empty keywords
+        if not keyword:
+            skipped_keywords.append({
+                'keyword': original_keyword,
+                'reason': 'Empty keyword'
+            })
+            continue
+
+        # Remove invalid characters (keep letters, numbers, spaces, hyphens, and underscores)
+        cleaned_keyword = re.sub(r'[^\w\s-]', '', keyword)
+
+        # Remove extra spaces
+        cleaned_keyword = ' '.join(cleaned_keyword.split())
+
+        # Check if keyword was heavily modified (lost all content)
+        if not cleaned_keyword:
+            skipped_keywords.append({
+                'keyword': original_keyword,
+                'reason': 'Only invalid characters'
+            })
+            continue
+
+        # Check word count
+        word_count = len(cleaned_keyword.split())
+        if word_count > max_words:
+            skipped_keywords.append({
+                'keyword': original_keyword,
+                'reason': f'Too many words ({word_count} words, max {max_words})'
+            })
+            continue
+
+        # Check if significantly different from original (warn user)
+        if cleaned_keyword.lower() != original_keyword.lower():
+            # Just track this for info, but still use the cleaned version
+            valid_keywords.append({
+                'original': original_keyword,
+                'cleaned': cleaned_keyword,
+                'modified': True
+            })
+        else:
+            valid_keywords.append({
+                'original': original_keyword,
+                'cleaned': cleaned_keyword,
+                'modified': False
+            })
+
+    return valid_keywords, skipped_keywords
+
 def call_dataforseo_api(keywords, login, password, location_code, language_code):
     """
     Call DataForSEO API to fetch search volume and keyword difficulty
@@ -114,7 +179,7 @@ def call_dataforseo_api(keywords, login, password, location_code, language_code)
         return None
 
 def process_api_response(response_data):
-    """Process API response and convert to dataframe"""
+    """Process API response and convert to dataframe - returns only Keyword, Search Volume, and Competition"""
     if not response_data or 'tasks' not in response_data:
         return None
 
@@ -122,19 +187,18 @@ def process_api_response(response_data):
     for task in response_data.get('tasks', []):
         if task.get('status_code') == 20000:  # Success
             for item in task.get('result', []):
+                # Only include the 3 requested fields
                 results.append({
                     'Keyword': item.get('keyword'),
-                    'Search Volume': item.get('search_volume'),
-                    'Competition': item.get('competition'),
-                    'Competition Index': item.get('competition_index'),
-                    'Low Top of Page Bid': item.get('low_top_of_page_bid_micros', 0) / 1000000,
-                    'High Top of Page Bid': item.get('high_top_of_page_bid_micros', 0) / 1000000,
-                    'CPC': item.get('cpc'),
-                    'Monthly Searches': json.dumps(item.get('monthly_searches', []))
+                    'Search Volume': item.get('search_volume', 0),
+                    'Competition': item.get('competition', 'N/A')
                 })
         else:
-            st.warning(f"Task failed with status code: {task.get('status_code')}")
-            st.warning(f"Message: {task.get('status_message')}")
+            # Only show warning if it's not the specific keyword validation errors we're already handling
+            status_code = task.get('status_code')
+            if status_code not in [40501]:  # Skip validation errors as we handle them
+                st.warning(f"Task failed with status code: {status_code}")
+                st.warning(f"Message: {task.get('status_message')}")
 
     if results:
         return pd.DataFrame(results)
@@ -186,19 +250,45 @@ if uploaded_file is not None:
             login, password = get_credentials()
 
             if login and password:
+                # Validate and clean keywords first
+                st.info("🔍 Validating and cleaning keywords...")
+                valid_keywords, skipped_keywords = validate_and_clean_keywords(keywords_list)
+
+                # Show validation results
+                if skipped_keywords:
+                    st.warning(f"⚠️ Skipped {len(skipped_keywords)} invalid keywords")
+                    with st.expander("View skipped keywords"):
+                        skipped_df = pd.DataFrame(skipped_keywords)
+                        st.dataframe(skipped_df, use_container_width=True)
+
+                if not valid_keywords:
+                    st.error("❌ No valid keywords to process. Please check your file.")
+                    st.stop()
+
+                # Show cleaned keywords info
+                modified_keywords = [kw for kw in valid_keywords if kw['modified']]
+                if modified_keywords:
+                    st.info(f"ℹ️ Cleaned {len(modified_keywords)} keywords (removed special characters)")
+                    with st.expander("View modified keywords"):
+                        modified_df = pd.DataFrame(modified_keywords)
+                        st.dataframe(modified_df[['original', 'cleaned']], use_container_width=True)
+
+                # Extract cleaned keywords for API call
+                cleaned_keywords_list = [kw['cleaned'] for kw in valid_keywords]
+
                 # Split keywords into batches (DataForSEO has limits)
                 batch_size = 100  # Adjust based on API limits
-                total_keywords = len(keywords_list)
+                total_keywords = len(cleaned_keywords_list)
                 num_batches = (total_keywords + batch_size - 1) // batch_size
 
-                st.info(f"Processing {total_keywords} keywords in {num_batches} batch(es)...")
+                st.info(f"Processing {total_keywords} valid keywords in {num_batches} batch(es)...")
 
                 all_results = []
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
                 for i in range(0, total_keywords, batch_size):
-                    batch = keywords_list[i:i + batch_size]
+                    batch = cleaned_keywords_list[i:i + batch_size]
                     batch_num = i // batch_size + 1
 
                     status_text.text(f"Processing batch {batch_num}/{num_batches}...")
@@ -239,7 +329,7 @@ if uploaded_file is not None:
                     st.dataframe(final_df, use_container_width=True)
 
                     # Statistics
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("Total Keywords", len(final_df))
                     with col2:
@@ -248,9 +338,6 @@ if uploaded_file is not None:
                     with col3:
                         total_volume = final_df['Search Volume'].sum()
                         st.metric("Total Search Volume", f"{total_volume:,.0f}")
-                    with col4:
-                        avg_cpc = final_df['CPC'].mean()
-                        st.metric("Avg CPC", f"${avg_cpc:.2f}")
 
                     # Download buttons
                     st.subheader("💾 Download Results")
@@ -294,12 +381,14 @@ else:
     6. **Download results**: Export your results as CSV or Excel
 
     ### 📊 What data you'll get:
-    - **Search Volume**: Monthly search volume
+    - **Keyword**: The keyword being analyzed
+    - **Search Volume**: Monthly search volume (last 30 days)
     - **Competition**: Competition level (LOW, MEDIUM, HIGH)
-    - **Competition Index**: Numerical competition index (0-100)
-    - **CPC**: Cost per click
-    - **Top of Page Bid**: Low and high bid ranges
-    - **Monthly Searches**: Historical search data
+
+    ### ⚠️ Keyword Requirements:
+    - Maximum 10 words per keyword
+    - Special characters (?, !, *, etc.) will be automatically removed
+    - Keywords with invalid format will be skipped with a warning
 
     ### 🔗 DataForSEO API Documentation:
     [View API Documentation](https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/)
