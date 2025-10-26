@@ -204,17 +204,56 @@ def process_api_response(response_data):
         return pd.DataFrame(results)
     return None
 
-def convert_df_to_excel(df):
-    """Convert dataframe to Excel file for download"""
+def create_summary_by_page(df):
+    """Create summary dataframe grouped by page/URL"""
+    # Check if 'page' column exists
+    if 'page' not in df.columns:
+        return None
+
+    # Group by page and calculate aggregations
+    summary = df.groupby('page').agg({
+        'Monthly Searches': 'sum',
+        'Clicks': 'sum',
+        'Impressions': 'sum',
+        'Avg. Position': 'mean'
+    }).reset_index()
+
+    # Calculate CTR % (Clicks / Impressions * 100)
+    summary['CTR %'] = (summary['Clicks'] / summary['Impressions'] * 100).round(2)
+
+    # Rename columns for clarity
+    summary.columns = ['Page', 'Total Monthly Searches', 'Total Clicks', 'Total Impressions', 'Avg. Position', 'CTR %']
+
+    # Round average position
+    summary['Avg. Position'] = summary['Avg. Position'].round(1)
+
+    # Sort by Total Monthly Searches descending
+    summary = summary.sort_values('Total Monthly Searches', ascending=False)
+
+    return summary
+
+def convert_df_to_excel(df, summary_df=None):
+    """Convert dataframe to Excel file with multiple sheets"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Keywords')
+        # Write main data sheet
+        df.to_excel(writer, index=False, sheet_name='All Keywords')
 
-        # Auto-adjust column width
-        worksheet = writer.sheets['Keywords']
+        # Auto-adjust column width for main sheet
+        worksheet = writer.sheets['All Keywords']
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).apply(len).max(), len(col)) + 2
             worksheet.set_column(i, i, min(max_len, 50))
+
+        # Write summary sheet if provided
+        if summary_df is not None:
+            summary_df.to_excel(writer, index=False, sheet_name='Summary by Page')
+
+            # Auto-adjust column width for summary sheet
+            summary_worksheet = writer.sheets['Summary by Page']
+            for i, col in enumerate(summary_df.columns):
+                max_len = max(summary_df[col].astype(str).apply(len).max(), len(col)) + 2
+                summary_worksheet.set_column(i, i, min(max_len, 50))
 
     return output.getvalue()
 
@@ -320,24 +359,99 @@ if uploaded_file is not None:
 
                 # Combine all results
                 if all_results:
-                    final_df = pd.concat(all_results, ignore_index=True)
+                    api_results_df = pd.concat(all_results, ignore_index=True)
 
-                    st.success(f"✅ Successfully fetched data for {len(final_df)} keywords!")
+                    st.success(f"✅ Successfully fetched data for {len(api_results_df)} keywords!")
+
+                    # Create mapping from original to cleaned keywords
+                    keyword_mapping = pd.DataFrame([{
+                        'original': kw['original'],
+                        'cleaned': kw['cleaned']
+                    } for kw in valid_keywords])
+
+                    # Merge API results with mapping
+                    api_results_df = api_results_df.merge(
+                        keyword_mapping,
+                        left_on='Keyword',
+                        right_on='cleaned',
+                        how='left'
+                    )
+
+                    # Create a copy of original dataframe
+                    merged_df = df.copy()
+
+                    # Rename the keyword column to 'query' if it's not already named that
+                    if keyword_column != 'query':
+                        merged_df = merged_df.rename(columns={keyword_column: 'query'})
+
+                    # Merge API results with original data based on query
+                    merged_df = merged_df.merge(
+                        api_results_df[['original', 'Search Volume', 'Competition']],
+                        left_on='query',
+                        right_on='original',
+                        how='left'
+                    )
+
+                    # Drop the extra 'original' column from merge
+                    if 'original' in merged_df.columns:
+                        merged_df = merged_df.drop(columns=['original'])
+
+                    # Rename API columns to match desired output format
+                    merged_df = merged_df.rename(columns={
+                        'Search Volume': 'Monthly Searches',
+                        'Competition': 'Keyword Difficulty'
+                    })
+
+                    # Reorder columns to match desired format
+                    # Expected: page, query, Monthly Searches, Keyword Difficulty, Clicks, Impressions, CTR %, Avg. Position
+                    desired_order = []
+                    if 'page' in merged_df.columns:
+                        desired_order.append('page')
+                    if 'query' in merged_df.columns:
+                        desired_order.append('query')
+
+                    # Add API columns
+                    if 'Monthly Searches' in merged_df.columns:
+                        desired_order.append('Monthly Searches')
+                    if 'Keyword Difficulty' in merged_df.columns:
+                        desired_order.append('Keyword Difficulty')
+
+                    # Add remaining columns in order
+                    for col in ['Clicks', 'Impressions', 'CTR %', 'Avg. Position']:
+                        if col in merged_df.columns:
+                            desired_order.append(col)
+
+                    # Add any remaining columns not in the list
+                    for col in merged_df.columns:
+                        if col not in desired_order:
+                            desired_order.append(col)
+
+                    merged_df = merged_df[desired_order]
+
+                    # Create summary by page (if page column exists)
+                    summary_df = None
+                    if 'page' in merged_df.columns and 'Clicks' in merged_df.columns and 'Impressions' in merged_df.columns:
+                        summary_df = create_summary_by_page(merged_df)
 
                     # Display results
                     st.subheader("📈 Results")
-                    st.dataframe(final_df, use_container_width=True)
+                    st.dataframe(merged_df, use_container_width=True)
 
                     # Statistics
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Total Keywords", len(final_df))
+                        st.metric("Total Keywords", len(merged_df))
                     with col2:
-                        avg_volume = final_df['Search Volume'].mean()
-                        st.metric("Avg Search Volume", f"{avg_volume:,.0f}")
+                        avg_volume = merged_df['Monthly Searches'].mean()
+                        st.metric("Avg Monthly Searches", f"{avg_volume:,.0f}")
                     with col3:
-                        total_volume = final_df['Search Volume'].sum()
-                        st.metric("Total Search Volume", f"{total_volume:,.0f}")
+                        total_volume = merged_df['Monthly Searches'].sum()
+                        st.metric("Total Monthly Searches", f"{total_volume:,.0f}")
+
+                    # Show summary if available
+                    if summary_df is not None:
+                        st.subheader("📊 Summary by Page")
+                        st.dataframe(summary_df, use_container_width=True)
 
                     # Download buttons
                     st.subheader("💾 Download Results")
@@ -345,8 +459,8 @@ if uploaded_file is not None:
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        # CSV download
-                        csv = final_df.to_csv(index=False).encode('utf-8')
+                        # CSV download (main data only)
+                        csv = merged_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             label="📥 Download as CSV",
                             data=csv,
@@ -355,10 +469,10 @@ if uploaded_file is not None:
                         )
 
                     with col2:
-                        # Excel download
-                        excel_data = convert_df_to_excel(final_df)
+                        # Excel download (with both sheets)
+                        excel_data = convert_df_to_excel(merged_df, summary_df)
                         st.download_button(
-                            label="📥 Download as Excel",
+                            label="📥 Download as Excel (with Summary)",
                             data=excel_data,
                             file_name="seo_keywords_results.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -373,17 +487,40 @@ else:
     st.markdown("""
     ### 📝 Instructions:
 
-    1. **Prepare your file**: Create a CSV or Excel file with a column containing your keywords
-    2. **Configure API credentials**: Add your DataForSEO credentials in Streamlit Secrets
-    3. **Upload the file**: Use the file uploader above
-    4. **Select keyword column**: Choose which column contains your keywords
-    5. **Fetch data**: Click the button to retrieve SEO metrics
-    6. **Download results**: Export your results as CSV or Excel
+    1. **Prepare your file**: Upload a CSV or Excel file from Google Search Console with these columns:
+       - `page` - Landing page URL
+       - `query` - Search keyword
+       - `Clicks` - Number of clicks
+       - `Impressions` - Number of impressions
+       - `CTR %` - Click-through rate
+       - `Avg. Position` - Average position in search results
 
-    ### 📊 What data you'll get:
-    - **Keyword**: The keyword being analyzed
-    - **Search Volume**: Monthly search volume (last 30 days)
-    - **Competition**: Competition level (LOW, MEDIUM, HIGH)
+    2. **Configure API credentials**: Add your DataForSEO credentials in Streamlit Secrets
+
+    3. **Upload the file**: Use the file uploader above
+
+    4. **Select keyword column**: Choose the column containing your keywords (usually "query")
+
+    5. **Fetch data**: Click the button to retrieve SEO metrics
+
+    6. **Download results**: Export your enriched data with two sheets:
+       - **All Keywords**: Original data + Monthly Searches + Keyword Difficulty
+       - **Summary by Page**: Aggregated metrics per landing page
+
+    ### 📊 Output Data:
+
+    **Sheet 1 - All Keywords:**
+    - All original columns from your file
+    - **Monthly Searches**: Search volume from DataForSEO API
+    - **Keyword Difficulty**: Competition level (LOW, MEDIUM, HIGH)
+
+    **Sheet 2 - Summary by Page:**
+    - **Page**: Landing page URL
+    - **Total Monthly Searches**: Sum of all keywords for this page
+    - **Total Clicks**: Sum of all clicks
+    - **Total Impressions**: Sum of all impressions
+    - **Avg. Position**: Average ranking position
+    - **CTR %**: Calculated from clicks/impressions
 
     ### ⚠️ Keyword Requirements:
     - Maximum 10 words per keyword

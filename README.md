@@ -1,28 +1,49 @@
 # 🔍 SEO Keyword Research Tool
 
-A powerful Streamlit web application for fetching SEO metrics including monthly search volume and keyword difficulty using the DataForSEO API.
+A powerful Streamlit web application for enriching Google Search Console data with SEO metrics from DataForSEO API.
 
 ## Features
 
-- 📁 **File Upload Support**: Upload CSV or Excel files with your keywords
-- 🔍 **SEO Metrics**: Fetch search volume, competition, CPC, and more
-- 📊 **Data Visualization**: View results in an interactive table
-- 💾 **Export Results**: Download results as CSV or Excel
+- 📁 **Google Search Console Integration**: Upload CSV/Excel exports from GSC
+- 🔍 **SEO Metrics**: Fetch monthly search volume and keyword difficulty
+- 📊 **Data Merging**: Combines your GSC data with API results
+- 📈 **Summary Reports**: Automatic page-level aggregations
+- 💾 **Multi-Sheet Export**: Download Excel files with detailed and summary data
 - 🔐 **Secure Authentication**: Store API credentials securely using Streamlit Secrets
 - ⚡ **Batch Processing**: Automatically handles large keyword lists
+- ✨ **Keyword Validation**: Auto-cleans special characters and validates keywords
 
 ## Demo
 
 Access the live app: [Your Streamlit Cloud URL]
 
-## What Data You'll Get
+## Input Data Format
 
-- **Search Volume**: Monthly search volume
-- **Competition**: Competition level (LOW, MEDIUM, HIGH)
-- **Competition Index**: Numerical competition index (0-100)
-- **CPC**: Cost per click in USD
-- **Top of Page Bid**: Low and high bid ranges
-- **Monthly Searches**: Historical search data
+Upload a CSV or Excel file from Google Search Console with these columns:
+
+| Column | Description |
+|--------|-------------|
+| `page` | Landing page URL |
+| `query` | Search keyword/query |
+| `Clicks` | Number of clicks |
+| `Impressions` | Number of impressions |
+| `CTR %` | Click-through rate |
+| `Avg. Position` | Average position in search results |
+
+## Output Data Format
+
+**Sheet 1 - All Keywords:**
+- All original columns from your input file
+- `Monthly Searches` - Search volume from DataForSEO API
+- `Keyword Difficulty` - Competition level (LOW, MEDIUM, HIGH)
+
+**Sheet 2 - Summary by Page:**
+- `Page` - Landing page URL
+- `Total Monthly Searches` - Sum of all keyword search volumes for this page
+- `Total Clicks` - Sum of all clicks
+- `Total Impressions` - Sum of all impressions
+- `Avg. Position` - Average ranking position
+- `CTR %` - Calculated as (Total Clicks / Total Impressions) × 100
 
 ## Prerequisites
 
@@ -113,35 +134,21 @@ password = "your-password"
 
 ## Usage
 
-### 1. Prepare Your Keyword File
+### 1. Export Data from Google Search Console
 
-Create a CSV or Excel file with your keywords. Example:
+1. Go to [Google Search Console](https://search.google.com/search-console)
+2. Navigate to **Performance** → **Search Results**
+3. Click **Export** and download as CSV or Excel
+4. Ensure the export includes: page, query, clicks, impressions, CTR, and position
 
-**keywords.csv**
-```csv
-keyword
-seo tools
-keyword research
-backlink checker
-content marketing
-digital marketing agency
-```
+### 2. Upload File to App
 
-**keywords.xlsx**
-| keyword |
-|---------|
-| seo tools |
-| keyword research |
-| backlink checker |
-
-### 2. Upload File
-
-- Click "Browse files" or drag and drop your file
+- Click "Browse files" or drag and drop your GSC export
 - Supported formats: CSV, XLSX, XLS
 
 ### 3. Select Keyword Column
 
-- Choose which column contains your keywords from the dropdown
+- Choose the column containing your keywords (usually "query")
 
 ### 4. Configure Settings (Optional)
 
@@ -154,13 +161,18 @@ In the sidebar, you can adjust:
 ### 5. Fetch SEO Data
 
 - Click "🚀 Fetch SEO Data" button
-- Wait for the API to process your keywords
+- App validates and cleans keywords automatically
+- API fetches search volume and competition data
 - View results in the interactive table
 
-### 6. Download Results
+### 6. Download Enriched Results
 
-- Download as CSV or Excel format
-- Results include all fetched metrics
+**CSV Download:**
+- Contains all data merged in a single file
+
+**Excel Download (Recommended):**
+- **Sheet 1 - All Keywords**: Complete data with all original columns + API data
+- **Sheet 2 - Summary by Page**: Aggregated metrics per landing page
 
 ## API Rate Limits
 
