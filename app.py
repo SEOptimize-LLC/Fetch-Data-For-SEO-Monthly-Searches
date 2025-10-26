@@ -14,6 +14,14 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize session state for caching results
+if 'merged_df' not in st.session_state:
+    st.session_state.merged_df = None
+if 'summary_df' not in st.session_state:
+    st.session_state.summary_df = None
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
+
 # Title and description
 st.title("🔍 SEO Keyword Research Tool")
 st.markdown("Upload a CSV or Excel file with keywords to fetch monthly search volume and competition data from DataForSEO")
@@ -205,21 +213,31 @@ def process_api_response(response_data):
     return None
 
 def create_summary_by_page(df):
-    """Create summary dataframe grouped by page/URL"""
+    """Create summary dataframe grouped by page/URL - ONE ROW PER UNIQUE PAGE"""
     # Check if 'page' column exists
     if 'page' not in df.columns:
         return None
 
-    # Group by page and calculate aggregations
-    summary = df.groupby('page').agg({
+    # Check if required columns exist
+    required_cols = ['Monthly Searches', 'Clicks', 'Impressions', 'Avg. Position']
+    for col in required_cols:
+        if col not in df.columns:
+            st.warning(f"Missing column '{col}' - cannot create summary")
+            return None
+
+    # Group by page and calculate aggregations (this creates ONE ROW per unique page)
+    summary = df.groupby('page', as_index=False).agg({
         'Monthly Searches': 'sum',
         'Clicks': 'sum',
         'Impressions': 'sum',
         'Avg. Position': 'mean'
-    }).reset_index()
+    })
 
     # Calculate CTR % (Clicks / Impressions * 100)
-    summary['CTR %'] = (summary['Clicks'] / summary['Impressions'] * 100).round(2)
+    # Handle division by zero
+    summary['CTR %'] = 0.0
+    mask = summary['Impressions'] > 0
+    summary.loc[mask, 'CTR %'] = (summary.loc[mask, 'Clicks'] / summary.loc[mask, 'Impressions'] * 100).round(2)
 
     # Rename columns for clarity
     summary.columns = ['Page', 'Total Monthly Searches', 'Total Clicks', 'Total Impressions', 'Avg. Position', 'CTR %']
@@ -228,29 +246,45 @@ def create_summary_by_page(df):
     summary['Avg. Position'] = summary['Avg. Position'].round(1)
 
     # Sort by Total Monthly Searches descending
-    summary = summary.sort_values('Total Monthly Searches', ascending=False)
+    summary = summary.sort_values('Total Monthly Searches', ascending=False).reset_index(drop=True)
 
     return summary
 
 def convert_df_to_excel(df, summary_df=None):
-    """Convert dataframe to Excel file with multiple sheets"""
+    """
+    Convert dataframe to Excel file with multiple sheets
+
+    Sheet 1 - All Keywords: Complete row-by-row data (one row per keyword)
+    Sheet 2 - Summary by Page: Aggregated data (one row per unique page/URL)
+    """
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Write main data sheet
-        df.to_excel(writer, index=False, sheet_name='All Keywords')
+        # Write main data sheet (ALL ROWS - one per keyword)
+        df.to_excel(writer, index=False, sheet_name='All Keywords', startrow=1)
+
+        workbook = writer.book
+        worksheet = writer.sheets['All Keywords']
+
+        # Add header note
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3'})
+        worksheet.write(0, 0, f'All Keywords - Detailed Data ({len(df):,} rows total)', header_format)
 
         # Auto-adjust column width for main sheet
-        worksheet = writer.sheets['All Keywords']
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).apply(len).max(), len(col)) + 2
             worksheet.set_column(i, i, min(max_len, 50))
 
-        # Write summary sheet if provided
-        if summary_df is not None:
-            summary_df.to_excel(writer, index=False, sheet_name='Summary by Page')
+        # Write summary sheet if provided (GROUPED DATA - one row per page)
+        if summary_df is not None and len(summary_df) > 0:
+            summary_df.to_excel(writer, index=False, sheet_name='Summary by Page', startrow=1)
+
+            summary_worksheet = writer.sheets['Summary by Page']
+
+            # Add header note
+            unique_pages = len(summary_df)
+            summary_worksheet.write(0, 0, f'Summary by Page - Aggregated Data ({unique_pages:,} unique pages)', header_format)
 
             # Auto-adjust column width for summary sheet
-            summary_worksheet = writer.sheets['Summary by Page']
             for i, col in enumerate(summary_df.columns):
                 max_len = max(summary_df[col].astype(str).apply(len).max(), len(col)) + 2
                 summary_worksheet.set_column(i, i, min(max_len, 50))
@@ -285,6 +319,11 @@ if uploaded_file is not None:
 
         # Process button
         if st.button("🚀 Fetch SEO Data", type="primary"):
+            # Reset session state when starting new processing
+            st.session_state.processing_complete = False
+            st.session_state.merged_df = None
+            st.session_state.summary_df = None
+
             # Get credentials
             login, password = get_credentials()
 
@@ -434,57 +473,87 @@ if uploaded_file is not None:
 
                     merged_df = merged_df[desired_order]
 
+                    # Fill blank API results with defaults
+                    # Monthly Searches: default to 10 if null/0
+                    if 'Monthly Searches' in merged_df.columns:
+                        merged_df['Monthly Searches'] = merged_df['Monthly Searches'].fillna(10)
+                        merged_df.loc[merged_df['Monthly Searches'] == 0, 'Monthly Searches'] = 10
+
+                    # Keyword Difficulty: default to 'LOW' if null/empty
+                    if 'Keyword Difficulty' in merged_df.columns:
+                        merged_df['Keyword Difficulty'] = merged_df['Keyword Difficulty'].fillna('LOW')
+                        merged_df.loc[merged_df['Keyword Difficulty'] == '', 'Keyword Difficulty'] = 'LOW'
+
                     # Create summary by page (if page column exists)
                     summary_df = None
                     if 'page' in merged_df.columns and 'Clicks' in merged_df.columns and 'Impressions' in merged_df.columns:
                         summary_df = create_summary_by_page(merged_df)
 
-                    # Display results
-                    st.subheader("📈 Results")
-                    st.dataframe(merged_df, use_container_width=True)
+                    # Store results in session state to prevent reset on download
+                    st.session_state.merged_df = merged_df
+                    st.session_state.summary_df = summary_df
+                    st.session_state.processing_complete = True
 
-                    # Statistics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Total Keywords", len(merged_df))
-                    with col2:
-                        avg_volume = merged_df['Monthly Searches'].mean()
-                        st.metric("Avg Monthly Searches", f"{avg_volume:,.0f}")
-                    with col3:
-                        total_volume = merged_df['Monthly Searches'].sum()
-                        st.metric("Total Monthly Searches", f"{total_volume:,.0f}")
+        # Display results if available (either from current run or cached in session state)
+        if st.session_state.processing_complete and st.session_state.merged_df is not None:
+            merged_df = st.session_state.merged_df
+            summary_df = st.session_state.summary_df
 
-                    # Show summary if available
-                    if summary_df is not None:
-                        st.subheader("📊 Summary by Page")
-                        st.dataframe(summary_df, use_container_width=True)
+            # Display results
+            st.subheader("📈 Results - All Keywords")
+            st.info(f"Showing {len(merged_df):,} keywords with enriched data")
+            st.dataframe(merged_df, use_container_width=True)
 
-                    # Download buttons
-                    st.subheader("💾 Download Results")
+            # Statistics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Keywords", len(merged_df))
+            with col2:
+                avg_volume = merged_df['Monthly Searches'].mean()
+                st.metric("Avg Monthly Searches", f"{avg_volume:,.0f}")
+            with col3:
+                total_volume = merged_df['Monthly Searches'].sum()
+                st.metric("Total Monthly Searches", f"{total_volume:,.0f}")
 
-                    col1, col2 = st.columns(2)
+            # Show summary if available
+            if summary_df is not None and len(summary_df) > 0:
+                st.subheader("📊 Summary by Page")
+                st.success(f"Grouped into {len(summary_df):,} unique pages/URLs")
+                st.dataframe(summary_df, use_container_width=True)
 
-                    with col1:
-                        # CSV download (main data only)
-                        csv = merged_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download as CSV",
-                            data=csv,
-                            file_name="seo_keywords_results.csv",
-                            mime="text/csv"
-                        )
+                # Summary statistics
+                st.markdown("**Summary Sheet Info:**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Unique Pages", len(summary_df))
+                with col2:
+                    top_page_searches = summary_df['Total Monthly Searches'].iloc[0] if len(summary_df) > 0 else 0
+                    st.metric("Top Page Monthly Searches", f"{top_page_searches:,.0f}")
 
-                    with col2:
-                        # Excel download (with both sheets)
-                        excel_data = convert_df_to_excel(merged_df, summary_df)
-                        st.download_button(
-                            label="📥 Download as Excel (with Summary)",
-                            data=excel_data,
-                            file_name="seo_keywords_results.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                else:
-                    st.error("No results returned from the API. Please check your credentials and try again.")
+            # Download buttons
+            st.subheader("💾 Download Results")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # CSV download (main data only)
+                csv = merged_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download as CSV",
+                    data=csv,
+                    file_name="seo_keywords_results.csv",
+                    mime="text/csv"
+                )
+
+            with col2:
+                # Excel download (with both sheets)
+                excel_data = convert_df_to_excel(merged_df, summary_df)
+                st.download_button(
+                    label="📥 Download as Excel (with Summary)",
+                    data=excel_data,
+                    file_name="seo_keywords_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 else:
     # Instructions when no file is uploaded
