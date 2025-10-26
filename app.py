@@ -315,12 +315,15 @@ if uploaded_file is not None:
                 # Extract cleaned keywords for API call
                 cleaned_keywords_list = [kw['cleaned'] for kw in valid_keywords]
 
-                # Split keywords into batches (DataForSEO has limits)
-                batch_size = 100  # Adjust based on API limits
+                # Split keywords into batches (DataForSEO allows up to 1000 keywords per request)
+                batch_size = 1000  # DataForSEO limit: 1000 keywords per request
                 total_keywords = len(cleaned_keywords_list)
                 num_batches = (total_keywords + batch_size - 1) // batch_size
 
-                st.info(f"Processing {total_keywords} valid keywords in {num_batches} batch(es)...")
+                if num_batches == 1:
+                    st.info(f"Processing {total_keywords} keywords in a single API request...")
+                else:
+                    st.info(f"Processing {total_keywords} keywords in {num_batches} API requests (batches of {batch_size})...")
 
                 all_results = []
                 progress_bar = st.progress(0)
@@ -330,7 +333,10 @@ if uploaded_file is not None:
                     batch = cleaned_keywords_list[i:i + batch_size]
                     batch_num = i // batch_size + 1
 
-                    status_text.text(f"Processing batch {batch_num}/{num_batches}...")
+                    if num_batches == 1:
+                        status_text.text(f"Making API request for {len(batch)} keywords...")
+                    else:
+                        status_text.text(f"Making API request {batch_num}/{num_batches} ({len(batch)} keywords)...")
 
                     # Call API
                     response_data = call_dataforseo_api(

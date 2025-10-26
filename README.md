@@ -174,12 +174,18 @@ In the sidebar, you can adjust:
 - **Sheet 1 - All Keywords**: Complete data with all original columns + API data
 - **Sheet 2 - Summary by Page**: Aggregated metrics per landing page
 
-## API Rate Limits
+## API Usage & Cost
 
-The app automatically handles batch processing with rate limiting to comply with DataForSEO API limits:
-- Maximum 100 keywords per request
-- 1-second delay between batches
-- Adjust `batch_size` in `app.py` if needed
+The app is optimized to minimize API costs:
+- **1000 keywords per request**: Maximum allowed by DataForSEO
+- **Single request for most files**: Up to 1000 keywords processed in one API call
+- **Automatic batching**: Files with >1000 keywords are split into batches of 1000
+- **1-second delay between batches**: Only when multiple requests are needed
+
+**Cost Example:**
+- 656 keywords = 1 API request = 1 API charge
+- 1500 keywords = 2 API requests = 2 API charges
+- 3000 keywords = 3 API requests = 3 API charges
 
 ## File Structure
 
