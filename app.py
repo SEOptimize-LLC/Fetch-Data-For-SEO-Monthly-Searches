@@ -233,9 +233,12 @@ def process_google_ads_response(response_data):
                 continue
 
             for result_item in task_result:
+                # Debug: Show what's actually in result_item
+                st.info(f"Result item keys: {list(result_item.keys())}")
+
                 items = result_item.get('items', [])
                 if not items:
-                    st.warning("Result item has no items")
+                    st.warning(f"Result item has no items. Full result_item: {result_item}")
                     continue
 
                 for item in items:
