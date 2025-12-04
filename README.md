@@ -1,25 +1,33 @@
 # DataForSEO Clickstream Search Volume Tool
 
-A Streamlit web application for fetching clickstream-based search volume data from the DataForSEO API.
+A Streamlit web application for fetching clickstream-based search volume data and keyword competition metrics from the DataForSEO API.
 
 ## Features
 
 - **Clickstream Data**: Uses DataForSEO's Clickstream Global Search Volume API for accurate search metrics
 - **US-Focused**: Extracts US-specific search volume from global data
-- **Keyword Difficulty**: Categorizes keywords as LOW, MEDIUM, or HIGH based on search volume
+- **Keyword Competition**: Retrieves competition level (LOW, MEDIUM, HIGH) from Google Ads API
+- **Duplicate Detection**: Automatically removes duplicate keywords before processing
+- **Keyword Validation**: Cleans invalid characters and validates word count
 - **Batch Processing**: Automatically handles up to 1,000 keywords per API request
 - **Cost Optimized**: Minimizes API costs by batching keywords efficiently
 - **Secure**: API credentials stored securely via Streamlit Secrets
 
-## API Endpoint
+## API Endpoints
 
-This tool uses the DataForSEO Clickstream Global Search Volume endpoint:
+This tool uses two DataForSEO endpoints:
 
+### 1. Clickstream Global Search Volume
 ```
 POST https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live
 ```
+[Documentation](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
 
-[API Documentation](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
+### 2. Google Ads Search Volume (for Competition)
+```
+POST https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live
+```
+[Documentation](https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/)
 
 ## Output Data
 
@@ -28,7 +36,9 @@ POST https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_
 | Keyword | Your original keyword |
 | Global Search Volume | Worldwide clickstream search volume |
 | US Search Volume | United States clickstream search volume |
-| Keyword Difficulty | LOW (< 1K), MEDIUM (1K-10K), HIGH (> 10K) |
+| Keyword Difficulty | Competition level (LOW, MEDIUM, HIGH) from Google Ads |
+
+**Note**: The Keyword Difficulty column shows the competition level from Google Ads, which represents the level of advertiser bidding activity for each keyword.
 
 ## API Limits
 
@@ -119,18 +129,20 @@ password = "your-password"
 1. **Prepare your file**: Create a CSV or Excel file with a column containing keywords
 2. **Upload the file**: Use the file uploader in the app
 3. **Select keyword column**: Choose the column containing your keywords
-4. **Fetch data**: Click the button to retrieve search volume data
+4. **Fetch data**: Click the button to retrieve search volume and competition data
+   - Duplicate keywords are automatically removed
+   - Invalid characters are cleaned from keywords
 5. **Download results**: Export as CSV or Excel
 
 ## Cost Optimization
 
-The app batches keywords to minimize API costs:
+The app batches keywords to minimize API costs. Each batch makes 2 API calls (Clickstream + Google Ads):
 
-- Up to 1,000 keywords = 1 API request
-- 1,500 keywords = 2 API requests
-- 3,000 keywords = 3 API requests
+- Up to 1,000 keywords = 2 API requests
+- 1,500 keywords = 4 API requests
+- 3,000 keywords = 6 API requests
 
-**Pricing**: $0.15 per API request (up to 1,000 keywords)
+**Note**: Duplicate keywords are automatically removed before processing, further reducing API costs.
 
 ## File Structure
 
@@ -186,4 +198,4 @@ MIT License
 
 ---
 
-Powered by DataForSEO Clickstream Data API
+Powered by DataForSEO Clickstream & Google Ads APIs
