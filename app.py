@@ -10,7 +10,8 @@ import re
 LOCATION_CODE = 2840  # United States
 LANGUAGE_CODE = "en"  # English
 BATCH_SIZE = 1000  # DataForSEO limit: 1000 keywords per request
-API_ENDPOINT = "https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live"
+CLICKSTREAM_API_ENDPOINT = "https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live"
+GOOGLE_ADS_API_ENDPOINT = "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live"
 
 # Page configuration
 st.set_page_config(
@@ -25,17 +26,44 @@ st.markdown("Upload a file with keywords to fetch clickstream-based search volum
 
 # Sidebar for API configuration
 st.sidebar.header("Configuration")
+
+# Check if credentials are configured
+credentials_configured = False
+try:
+    if st.secrets.get("dataforseo", {}).get("login") and st.secrets.get("dataforseo", {}).get("password"):
+        credentials_configured = True
+except Exception:
+    pass
+
+if credentials_configured:
+    st.sidebar.success("API Credentials Configured")
+else:
+    st.sidebar.warning("API Credentials Not Configured")
+
 st.sidebar.markdown("""
 ### DataForSEO API Credentials
-Configure your credentials in Streamlit Cloud:
-1. Go to your app settings
-2. Navigate to **Secrets** tab
-3. Add your credentials:
+
+**For Streamlit Cloud:**
+1. Go to your app dashboard at [share.streamlit.io](https://share.streamlit.io)
+2. Click on your app's menu (three dots)
+3. Select **Settings** > **Secrets**
+4. Add your credentials:
 ```toml
 [dataforseo]
 login = "your-email@example.com"
-password = "your-password"
+password = "your-api-password"
 ```
+5. Click **Save**
+
+**For Local Development:**
+Create `.streamlit/secrets.toml` in your project:
+```toml
+[dataforseo]
+login = "your-email@example.com"
+password = "your-api-password"
+```
+
+[Get API credentials](https://app.dataforseo.com/)
 """)
 
 st.sidebar.markdown("---")
@@ -75,12 +103,15 @@ def read_file(file):
 def validate_and_clean_keywords(keywords_list, max_words=10):
     """
     Validate and clean keywords before sending to DataForSEO API
+    - Remove duplicate keywords (case-insensitive)
     - Remove invalid characters
     - Skip keywords with too many words
     - Track skipped keywords and reasons
     """
     valid_keywords = []
     skipped_keywords = []
+    duplicate_keywords = []
+    seen_keywords = set()  # Track unique keywords (lowercase for case-insensitive comparison)
 
     for keyword in keywords_list:
         original_keyword = keyword
@@ -119,21 +150,31 @@ def validate_and_clean_keywords(keywords_list, max_words=10):
             })
             continue
 
+        # Check for duplicates (case-insensitive)
+        cleaned_lower = cleaned_keyword.lower()
+        if cleaned_lower in seen_keywords:
+            duplicate_keywords.append({
+                'keyword': original_keyword,
+                'reason': 'Duplicate keyword'
+            })
+            continue
+
+        # Mark as seen and add to valid list
+        seen_keywords.add(cleaned_lower)
         valid_keywords.append({
             'original': original_keyword,
             'cleaned': cleaned_keyword,
             'modified': cleaned_keyword.lower() != original_keyword.lower()
         })
 
-    return valid_keywords, skipped_keywords
+    return valid_keywords, skipped_keywords, duplicate_keywords
 
 
-def call_dataforseo_api(keywords, login, password):
+def call_clickstream_api(keywords, login, password):
     """
     Call DataForSEO Clickstream Global Search Volume API
     Endpoint: POST https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live
     """
-    # Prepare authentication
     cred = f"{login}:{password}"
     encoded_cred = base64.b64encode(cred.encode('ascii')).decode('ascii')
 
@@ -142,37 +183,49 @@ def call_dataforseo_api(keywords, login, password):
         'Content-Type': 'application/json'
     }
 
-    # Prepare request body - Global Search Volume returns worldwide data
     post_data = [{
         "keywords": keywords
     }]
 
     try:
-        response = requests.post(API_ENDPOINT, headers=headers, json=post_data)
+        response = requests.post(CLICKSTREAM_API_ENDPOINT, headers=headers, json=post_data)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"API Error: {str(e)}")
+        st.error(f"Clickstream API Error: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
             st.error(f"Response: {e.response.text}")
         return None
 
 
-def get_keyword_difficulty(search_volume):
+def call_google_ads_api(keywords, login, password):
     """
-    Calculate keyword difficulty based on search volume thresholds
-    - LOW: < 1,000 monthly searches
-    - MEDIUM: 1,000 - 10,000 monthly searches
-    - HIGH: > 10,000 monthly searches
+    Call DataForSEO Google Ads Search Volume API to get competition data
+    Endpoint: POST https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live
     """
-    if search_volume is None or search_volume == 0:
-        return "N/A"
-    elif search_volume < 1000:
-        return "LOW"
-    elif search_volume <= 10000:
-        return "MEDIUM"
-    else:
-        return "HIGH"
+    cred = f"{login}:{password}"
+    encoded_cred = base64.b64encode(cred.encode('ascii')).decode('ascii')
+
+    headers = {
+        'Authorization': f'Basic {encoded_cred}',
+        'Content-Type': 'application/json'
+    }
+
+    post_data = [{
+        "keywords": keywords,
+        "location_code": LOCATION_CODE,
+        "language_code": LANGUAGE_CODE
+    }]
+
+    try:
+        response = requests.post(GOOGLE_ADS_API_ENDPOINT, headers=headers, json=post_data)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Google Ads API Error: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            st.error(f"Response: {e.response.text}")
+        return None
 
 
 def extract_us_search_volume(countries_data):
@@ -190,10 +243,10 @@ def extract_us_search_volume(countries_data):
     return None
 
 
-def process_api_response(response_data):
+def process_clickstream_response(response_data):
     """
-    Process API response and convert to dataframe
-    Returns: Keyword, Global Search Volume, US Search Volume, Keyword Difficulty
+    Process Clickstream API response and convert to dataframe
+    Returns: Keyword, Global Search Volume, US Search Volume
     """
     if not response_data or 'tasks' not in response_data:
         return None
@@ -213,24 +266,50 @@ def process_api_response(response_data):
                     if us_search_volume is None:
                         us_search_volume = 0
 
-                    # Calculate keyword difficulty based on US search volume
-                    keyword_difficulty = get_keyword_difficulty(us_search_volume)
-
                     results.append({
                         'Keyword': keyword,
                         'Global Search Volume': global_search_volume,
-                        'US Search Volume': us_search_volume,
-                        'Keyword Difficulty': keyword_difficulty
+                        'US Search Volume': us_search_volume
                     })
         else:
             status_code = task.get('status_code')
             if status_code not in [40501]:  # Skip validation errors
-                st.warning(f"Task failed with status code: {status_code}")
+                st.warning(f"Clickstream API task failed with status code: {status_code}")
                 st.warning(f"Message: {task.get('status_message')}")
 
     if results:
         return pd.DataFrame(results)
     return None
+
+
+def process_google_ads_response(response_data):
+    """
+    Process Google Ads API response to extract competition data
+    Returns: Dictionary mapping keyword -> competition level (LOW, MEDIUM, HIGH)
+    """
+    if not response_data or 'tasks' not in response_data:
+        return {}
+
+    competition_map = {}
+    for task in response_data.get('tasks', []):
+        if task.get('status_code') == 20000:  # Success
+            for result_item in task.get('result', []):
+                items = result_item.get('items', [])
+                for item in items:
+                    keyword = item.get('keyword', '')
+                    # The API returns competition as "LOW", "MEDIUM", or "HIGH"
+                    competition = item.get('competition', None)
+                    if competition:
+                        competition_map[keyword.lower()] = competition
+                    else:
+                        competition_map[keyword.lower()] = 'N/A'
+        else:
+            status_code = task.get('status_code')
+            if status_code not in [40501]:  # Skip validation errors
+                st.warning(f"Google Ads API task failed with status code: {status_code}")
+                st.warning(f"Message: {task.get('status_message')}")
+
+    return competition_map
 
 
 def convert_df_to_excel(df):
@@ -290,7 +369,14 @@ if uploaded_file is not None:
             if login and password:
                 # Validate and clean keywords
                 st.info("Validating and cleaning keywords...")
-                valid_keywords, skipped_keywords = validate_and_clean_keywords(keywords_list)
+                valid_keywords, skipped_keywords, duplicate_keywords = validate_and_clean_keywords(keywords_list)
+
+                # Show duplicate keywords info
+                if duplicate_keywords:
+                    st.warning(f"Removed {len(duplicate_keywords)} duplicate keywords")
+                    with st.expander("View duplicate keywords"):
+                        dup_df = pd.DataFrame(duplicate_keywords)
+                        st.dataframe(dup_df, use_container_width=True)
 
                 # Show validation results
                 if skipped_keywords:
@@ -318,12 +404,12 @@ if uploaded_file is not None:
                 total_keywords = len(cleaned_keywords_list)
                 num_batches = (total_keywords + BATCH_SIZE - 1) // BATCH_SIZE
 
-                if num_batches == 1:
-                    st.info(f"Processing {total_keywords} keywords in a single API request...")
-                else:
-                    st.info(f"Processing {total_keywords} keywords in {num_batches} API requests (batches of {BATCH_SIZE})...")
+                st.info(f"Processing {total_keywords} unique keywords...")
+                if num_batches > 1:
+                    st.info(f"Using {num_batches} batches of up to {BATCH_SIZE} keywords each")
 
-                all_results = []
+                all_clickstream_results = []
+                all_competition_data = {}
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
@@ -331,18 +417,22 @@ if uploaded_file is not None:
                     batch = cleaned_keywords_list[i:i + BATCH_SIZE]
                     batch_num = i // BATCH_SIZE + 1
 
-                    if num_batches == 1:
-                        status_text.text(f"Making API request for {len(batch)} keywords...")
-                    else:
-                        status_text.text(f"Making API request {batch_num}/{num_batches} ({len(batch)} keywords)...")
+                    # Step 1: Call Clickstream API for search volume
+                    status_text.text(f"Batch {batch_num}/{num_batches}: Fetching search volume data...")
+                    clickstream_response = call_clickstream_api(batch, login, password)
 
-                    # Call API
-                    response_data = call_dataforseo_api(batch, login, password)
-
-                    if response_data:
-                        batch_df = process_api_response(response_data)
+                    if clickstream_response:
+                        batch_df = process_clickstream_response(clickstream_response)
                         if batch_df is not None:
-                            all_results.append(batch_df)
+                            all_clickstream_results.append(batch_df)
+
+                    # Step 2: Call Google Ads API for competition data
+                    status_text.text(f"Batch {batch_num}/{num_batches}: Fetching competition data...")
+                    google_ads_response = call_google_ads_api(batch, login, password)
+
+                    if google_ads_response:
+                        batch_competition = process_google_ads_response(google_ads_response)
+                        all_competition_data.update(batch_competition)
 
                     # Update progress
                     progress = min((i + BATCH_SIZE) / total_keywords, 1.0)
@@ -356,8 +446,13 @@ if uploaded_file is not None:
                 status_text.text("Processing complete!")
 
                 # Combine all results
-                if all_results:
-                    api_results_df = pd.concat(all_results, ignore_index=True)
+                if all_clickstream_results:
+                    api_results_df = pd.concat(all_clickstream_results, ignore_index=True)
+
+                    # Add competition data from Google Ads API
+                    api_results_df['Keyword Difficulty'] = api_results_df['Keyword'].apply(
+                        lambda kw: all_competition_data.get(kw.lower(), 'N/A')
+                    )
 
                     st.success(f"Successfully fetched data for {len(api_results_df)} keywords!")
 
@@ -397,19 +492,23 @@ if uploaded_file is not None:
                         high_diff = len(final_df[final_df['Keyword Difficulty'] == 'HIGH'])
                         st.metric("High Difficulty Keywords", high_diff)
 
-                    # Difficulty breakdown
-                    st.subheader("Keyword Difficulty Breakdown")
+                    # Competition breakdown (from Google Ads API)
+                    st.subheader("Keyword Competition Breakdown")
+                    st.caption("Competition level based on advertiser bidding activity from Google Ads")
                     difficulty_counts = final_df['Keyword Difficulty'].value_counts()
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         low_count = difficulty_counts.get('LOW', 0)
-                        st.metric("LOW (< 1K)", low_count)
+                        st.metric("LOW", low_count)
                     with col2:
                         med_count = difficulty_counts.get('MEDIUM', 0)
-                        st.metric("MEDIUM (1K-10K)", med_count)
+                        st.metric("MEDIUM", med_count)
                     with col3:
                         high_count = difficulty_counts.get('HIGH', 0)
-                        st.metric("HIGH (> 10K)", high_count)
+                        st.metric("HIGH", high_count)
+                    with col4:
+                        na_count = difficulty_counts.get('N/A', 0)
+                        st.metric("N/A", na_count)
 
                     # Download buttons
                     st.subheader("Download Results")
@@ -445,13 +544,18 @@ else:
 
     1. **Prepare your file**: Create a CSV or Excel file with a column containing keywords
 
-    2. **Configure API credentials**: Add your DataForSEO credentials in Streamlit Secrets
+    2. **Configure API credentials**: Add your DataForSEO credentials in Streamlit Secrets (see sidebar)
 
     3. **Upload the file**: Use the file uploader above
 
     4. **Select keyword column**: Choose the column containing your keywords
 
-    5. **Fetch data**: Click the button to retrieve search volume data
+    5. **Fetch data**: Click the button to retrieve search volume and competition data
+
+    ### Features:
+
+    - **Duplicate removal**: Automatically detects and removes duplicate keywords
+    - **Keyword validation**: Cleans invalid characters and validates word count
 
     ### Output Data:
 
@@ -460,7 +564,7 @@ else:
     | Keyword | Your original keyword |
     | Global Search Volume | Worldwide clickstream search volume |
     | US Search Volume | United States clickstream search volume |
-    | Keyword Difficulty | LOW (< 1K), MEDIUM (1K-10K), HIGH (> 10K) |
+    | Keyword Difficulty | Competition level (LOW, MEDIUM, HIGH) from Google Ads |
 
     ### API Limits:
 
@@ -469,13 +573,14 @@ else:
     - **30 simultaneous requests** maximum
 
     ### API Documentation:
-    [DataForSEO Clickstream Global Search Volume](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
+    - [Clickstream Global Search Volume](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
+    - [Google Ads Search Volume](https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/)
     """)
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666;'>
-    <p>Powered by DataForSEO Clickstream Data API</p>
+    <p>Powered by DataForSEO Clickstream & Google Ads APIs</p>
 </div>
 """, unsafe_allow_html=True)
