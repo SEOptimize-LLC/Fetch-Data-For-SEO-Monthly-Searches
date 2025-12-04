@@ -173,7 +173,13 @@ def call_google_ads_api(keywords, login, password):
     try:
         response = requests.post(GOOGLE_ADS_API_ENDPOINT, headers=headers, json=post_data)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+
+        # Debug: Show API response status
+        if result.get('status_code') != 20000:
+            st.error(f"API Status: {result.get('status_code')} - {result.get('status_message')}")
+
+        return result
     except requests.exceptions.RequestException as e:
         st.error(f"Google Ads API Error: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
@@ -208,14 +214,30 @@ def process_google_ads_response(response_data):
     - Last month's search volume (US)
     - Competition level (keyword difficulty)
     """
-    if not response_data or 'tasks' not in response_data:
+    if not response_data:
+        st.error("No response data received from API")
+        return None
+
+    if 'tasks' not in response_data:
+        st.error(f"No 'tasks' in response. Response keys: {list(response_data.keys())}")
+        st.error(f"Full response: {response_data}")
         return None
 
     results = []
     for task in response_data.get('tasks', []):
-        if task.get('status_code') == 20000:  # Success
-            for result_item in task.get('result', []):
+        task_status = task.get('status_code')
+        if task_status == 20000:  # Success
+            task_result = task.get('result')
+            if not task_result:
+                st.warning("Task succeeded but result is empty")
+                continue
+
+            for result_item in task_result:
                 items = result_item.get('items', [])
+                if not items:
+                    st.warning("Result item has no items")
+                    continue
+
                 for item in items:
                     keyword = item.get('keyword', '')
 
@@ -234,13 +256,13 @@ def process_google_ads_response(response_data):
                         'Keyword Difficulty': competition
                     })
         else:
-            status_code = task.get('status_code')
-            if status_code not in [40501]:  # Skip validation errors
-                st.warning(f"Google Ads API task failed with status code: {status_code}")
-                st.warning(f"Message: {task.get('status_message')}")
+            st.error(f"Task failed with status code: {task_status}")
+            st.error(f"Message: {task.get('status_message')}")
 
     if results:
         return pd.DataFrame(results)
+
+    st.warning("No results extracted from API response")
     return None
 
 
