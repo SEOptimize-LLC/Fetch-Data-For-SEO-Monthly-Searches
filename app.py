@@ -40,31 +40,6 @@ if credentials_configured:
 else:
     st.sidebar.warning("API Credentials Not Configured")
 
-st.sidebar.markdown("""
-### DataForSEO API Credentials
-
-**For Streamlit Cloud:**
-1. Go to your app dashboard at [share.streamlit.io](https://share.streamlit.io)
-2. Click on your app's menu (three dots)
-3. Select **Settings** > **Secrets**
-4. Add your credentials:
-```toml
-[dataforseo]
-login = "your-email@example.com"
-password = "your-api-password"
-```
-5. Click **Save**
-
-**For Local Development:**
-Create `.streamlit/secrets.toml` in your project:
-```toml
-[dataforseo]
-login = "your-email@example.com"
-password = "your-api-password"
-```
-
-[Get API credentials](https://app.dataforseo.com/)
-""")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
