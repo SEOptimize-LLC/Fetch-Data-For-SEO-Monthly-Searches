@@ -1,61 +1,52 @@
-# 🔍 SEO Keyword Research Tool
+# DataForSEO Clickstream Search Volume Tool
 
-A powerful Streamlit web application for enriching Google Search Console data with SEO metrics from DataForSEO API.
+A Streamlit web application for fetching clickstream-based search volume data from the DataForSEO API.
 
 ## Features
 
-- 📁 **Google Search Console Integration**: Upload CSV/Excel exports from GSC
-- 🔍 **SEO Metrics**: Fetch monthly search volume and keyword difficulty
-- 📊 **Data Merging**: Combines your GSC data with API results
-- 📈 **Summary Reports**: Automatic page-level aggregations
-- 💾 **Multi-Sheet Export**: Download Excel files with detailed and summary data
-- 🔐 **Secure Authentication**: Store API credentials securely using Streamlit Secrets
-- ⚡ **Batch Processing**: Automatically handles large keyword lists
-- ✨ **Keyword Validation**: Auto-cleans special characters and validates keywords
+- **Clickstream Data**: Uses DataForSEO's Clickstream Global Search Volume API for accurate search metrics
+- **US-Focused**: Extracts US-specific search volume from global data
+- **Keyword Difficulty**: Categorizes keywords as LOW, MEDIUM, or HIGH based on search volume
+- **Batch Processing**: Automatically handles up to 1,000 keywords per API request
+- **Cost Optimized**: Minimizes API costs by batching keywords efficiently
+- **Secure**: API credentials stored securely via Streamlit Secrets
 
-## Demo
+## API Endpoint
 
-Access the live app: [Your Streamlit Cloud URL]
+This tool uses the DataForSEO Clickstream Global Search Volume endpoint:
 
-## Input Data Format
+```
+POST https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live
+```
 
-Upload a CSV or Excel file from Google Search Console with these columns:
+[API Documentation](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
+
+## Output Data
 
 | Column | Description |
 |--------|-------------|
-| `page` | Landing page URL |
-| `query` | Search keyword/query |
-| `Clicks` | Number of clicks |
-| `Impressions` | Number of impressions |
-| `CTR %` | Click-through rate |
-| `Avg. Position` | Average position in search results |
+| Keyword | Your original keyword |
+| Global Search Volume | Worldwide clickstream search volume |
+| US Search Volume | United States clickstream search volume |
+| Keyword Difficulty | LOW (< 1K), MEDIUM (1K-10K), HIGH (> 10K) |
 
-## Output Data Format
+## API Limits
 
-**Sheet 1 - All Keywords:**
-- All original columns from your input file
-- `Monthly Searches` - Search volume from DataForSEO API
-- `Keyword Difficulty` - Competition level (LOW, MEDIUM, HIGH)
-
-**Sheet 2 - Summary by Page:**
-- `Page` - Landing page URL
-- `Total Monthly Searches` - Sum of all keyword search volumes for this page
-- `Total Clicks` - Sum of all clicks
-- `Total Impressions` - Sum of all impressions
-- `Avg. Position` - Average ranking position
-- `CTR %` - Calculated as (Total Clicks / Total Impressions) × 100
+- **1,000 keywords** per API request (automatically batched)
+- **2,000 API calls** per minute maximum
+- **30 simultaneous requests** maximum
 
 ## Prerequisites
 
 1. **DataForSEO Account**: Sign up at [DataForSEO](https://dataforseo.com/)
-2. **API Credentials**: Get your API login and password from DataForSEO dashboard
+2. **API Credentials**: Get your API login and password from the DataForSEO dashboard
 
 ## Local Installation
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/Fetch-Data-For-SEO-Monthly-Searches.git
+git clone https://github.com/SEOptimize-LLC/Fetch-Data-For-SEO-Monthly-Searches.git
 cd Fetch-Data-For-SEO-Monthly-Searches
 ```
 
@@ -77,9 +68,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure Secrets (Local Development)
+### 4. Configure Secrets
 
-Create a `.streamlit/secrets.toml` file in the project root:
+Create a `.streamlit/secrets.toml` file:
 
 ```toml
 [dataforseo]
@@ -87,7 +78,7 @@ login = "your-email@example.com"
 password = "your-password"
 ```
 
-**Note**: Never commit `secrets.toml` to version control!
+**Note**: Never commit `secrets.toml` to version control.
 
 ### 5. Run the App
 
@@ -95,19 +86,11 @@ password = "your-password"
 streamlit run app.py
 ```
 
-The app will open in your browser at `http://localhost:8501`
+The app will open at `http://localhost:8501`
 
 ## Deployment to Streamlit Cloud
 
-### 1. Push to GitHub
-
-```bash
-git add .
-git commit -m "Initial commit"
-git push origin main
-```
-
-### 2. Deploy on Streamlit Cloud
+### 1. Deploy on Streamlit Cloud
 
 1. Go to [share.streamlit.io](https://share.streamlit.io/)
 2. Sign in with GitHub
@@ -116,12 +99,12 @@ git push origin main
 5. Set main file path: `app.py`
 6. Click "Deploy"
 
-### 3. Configure Secrets in Streamlit Cloud
+### 2. Configure Secrets
 
 1. Go to your app's dashboard on Streamlit Cloud
-2. Click on "Settings" (⚙️)
-3. Navigate to the "Secrets" tab
-4. Add your DataForSEO credentials:
+2. Click "Settings"
+3. Navigate to "Secrets" tab
+4. Add your credentials:
 
 ```toml
 [dataforseo]
@@ -130,164 +113,77 @@ password = "your-password"
 ```
 
 5. Click "Save"
-6. Your app will automatically restart with the new credentials
 
 ## Usage
 
-### 1. Export Data from Google Search Console
+1. **Prepare your file**: Create a CSV or Excel file with a column containing keywords
+2. **Upload the file**: Use the file uploader in the app
+3. **Select keyword column**: Choose the column containing your keywords
+4. **Fetch data**: Click the button to retrieve search volume data
+5. **Download results**: Export as CSV or Excel
 
-1. Go to [Google Search Console](https://search.google.com/search-console)
-2. Navigate to **Performance** → **Search Results**
-3. Click **Export** and download as CSV or Excel
-4. Ensure the export includes: page, query, clicks, impressions, CTR, and position
+## Cost Optimization
 
-### 2. Upload File to App
+The app batches keywords to minimize API costs:
 
-- Click "Browse files" or drag and drop your GSC export
-- Supported formats: CSV, XLSX, XLS
+- Up to 1,000 keywords = 1 API request
+- 1,500 keywords = 2 API requests
+- 3,000 keywords = 3 API requests
 
-### 3. Select Keyword Column
-
-- Choose the column containing your keywords (usually "query")
-
-### 4. Configure Settings (Optional)
-
-In the sidebar, you can adjust:
-- **Location Code**: Default is 2840 (United States)
-- **Language Code**: Default is "en" (English)
-
-[Find location codes here](https://docs.dataforseo.com/v3/appendix/locations/)
-
-### 5. Fetch SEO Data
-
-- Click "🚀 Fetch SEO Data" button
-- App validates and cleans keywords automatically
-- API fetches search volume and competition data
-- View results in the interactive table
-
-### 6. Download Enriched Results
-
-**CSV Download:**
-- Contains all data merged in a single file
-
-**Excel Download (Recommended):**
-- **Sheet 1 - All Keywords**: Complete data with all original columns + API data
-- **Sheet 2 - Summary by Page**: Aggregated metrics per landing page
-
-## API Usage & Cost
-
-The app is optimized to minimize API costs:
-- **1000 keywords per request**: Maximum allowed by DataForSEO
-- **Single request for most files**: Up to 1000 keywords processed in one API call
-- **Automatic batching**: Files with >1000 keywords are split into batches of 1000
-- **1-second delay between batches**: Only when multiple requests are needed
-
-**Cost Example:**
-- 656 keywords = 1 API request = 1 API charge
-- 1500 keywords = 2 API requests = 2 API charges
-- 3000 keywords = 3 API requests = 3 API charges
+**Pricing**: $0.15 per API request (up to 1,000 keywords)
 
 ## File Structure
 
 ```
 Fetch-Data-For-SEO-Monthly-Searches/
-├── app.py                      # Main Streamlit application
-├── requirements.txt            # Python dependencies
-├── README.md                   # This file
+├── app.py                 # Main Streamlit application
+├── requirements.txt       # Python dependencies
+├── README.md              # This file
 ├── .streamlit/
-│   └── config.toml            # Streamlit configuration
-└── .gitignore                 # Git ignore file
+│   └── config.toml        # Streamlit configuration
+└── .gitignore             # Git ignore file
 ```
-
-## Configuration
-
-### Location Codes
-
-Common location codes:
-- **2840**: United States
-- **2826**: United Kingdom
-- **2124**: Canada
-- **2036**: Australia
-- **2276**: Germany
-
-[Full list of location codes](https://docs.dataforseo.com/v3/appendix/locations/)
-
-### Language Codes
-
-Common language codes:
-- **en**: English
-- **es**: Spanish
-- **fr**: French
-- **de**: German
-- **it**: Italian
 
 ## Troubleshooting
 
 ### "DataForSEO credentials not configured" Error
 
-- Ensure secrets are properly configured in Streamlit Cloud
-- Check that the format matches exactly:
-  ```toml
-  [dataforseo]
-  login = "your-email@example.com"
-  password = "your-password"
-  ```
+Ensure secrets are properly configured with the exact format:
+
+```toml
+[dataforseo]
+login = "your-email@example.com"
+password = "your-password"
+```
 
 ### "API Error" Messages
 
 - Verify your DataForSEO credentials are correct
-- Check your DataForSEO account has sufficient credits
+- Check your account has sufficient credits
 - Ensure you're not exceeding API rate limits
 
 ### File Upload Issues
 
 - Maximum file size: 200MB
-- Ensure file contains a column with keywords
-- Check file format is CSV or Excel
+- Supported formats: CSV, XLSX, XLS
+- File must contain a column with keywords
 
-## API Documentation
-
-- [DataForSEO API Documentation](https://docs.dataforseo.com/)
-- [Search Volume Endpoint](https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/)
-
-## Technologies Used
+## Technologies
 
 - **Streamlit**: Web application framework
-- **Pandas**: Data manipulation and analysis
+- **Pandas**: Data manipulation
 - **Requests**: HTTP library for API calls
-- **OpenPyXL**: Excel file handling
 - **XlsxWriter**: Excel file creation
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License
 
 ## Support
 
-For issues and questions:
-- Open an issue on GitHub
+- Open an issue on GitHub for bugs or feature requests
 - Contact DataForSEO support for API-related questions
-- Check Streamlit documentation for deployment issues
-
-## Acknowledgments
-
-- [DataForSEO](https://dataforseo.com/) for providing the SEO API
-- [Streamlit](https://streamlit.io/) for the amazing web framework
-
-## Future Enhancements
-
-- [ ] Add support for multiple search engines
-- [ ] Include keyword suggestions
-- [ ] Add data visualization charts
-- [ ] Export to Google Sheets
-- [ ] Historical data tracking
-- [ ] Competitor analysis features
-- [ ] Bulk keyword difficulty scoring
 
 ---
 
-Made with ❤️ using Streamlit and DataForSEO API
+Powered by DataForSEO Clickstream Data API

@@ -2,24 +2,29 @@ import streamlit as st
 import pandas as pd
 import requests
 import base64
-import json
 from io import BytesIO
 import time
 import re
 
+# Constants - Fixed for US English only
+LOCATION_CODE = 2840  # United States
+LANGUAGE_CODE = "en"  # English
+BATCH_SIZE = 1000  # DataForSEO limit: 1000 keywords per request
+API_ENDPOINT = "https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live"
+
 # Page configuration
 st.set_page_config(
-    page_title="SEO Keyword Research Tool",
-    page_icon="🔍",
+    page_title="DataForSEO Clickstream Search Volume",
+    page_icon="📊",
     layout="wide"
 )
 
 # Title and description
-st.title("🔍 SEO Keyword Research Tool")
-st.markdown("Upload a CSV or Excel file with keywords to fetch monthly search volume and competition data from DataForSEO")
+st.title("📊 DataForSEO Clickstream Search Volume Tool")
+st.markdown("Upload a file with keywords to fetch clickstream-based search volume data from DataForSEO")
 
 # Sidebar for API configuration
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("Configuration")
 st.sidebar.markdown("""
 ### DataForSEO API Credentials
 Configure your credentials in Streamlit Cloud:
@@ -33,40 +38,26 @@ password = "your-password"
 ```
 """)
 
-# Check if credentials are configured
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+### API Settings (Fixed)
+- **Location:** United States (2840)
+- **Language:** English (en)
+- **Batch Size:** 1,000 keywords per request
+""")
+
+
 def get_credentials():
     """Retrieve DataForSEO credentials from Streamlit secrets"""
     try:
         login = st.secrets["dataforseo"]["login"]
         password = st.secrets["dataforseo"]["password"]
         return login, password
-    except Exception as e:
-        st.error("⚠️ DataForSEO credentials not configured. Please add them in Streamlit Secrets.")
+    except Exception:
+        st.error("DataForSEO credentials not configured. Please add them in Streamlit Secrets.")
         st.stop()
         return None, None
 
-# API configuration
-st.sidebar.subheader("API Settings")
-location_code = st.sidebar.number_input(
-    "Location Code",
-    value=2840,
-    help="Location code for the search (default: 2840 for United States)"
-)
-language_code = st.sidebar.text_input(
-    "Language Code",
-    value="en",
-    help="Language code (e.g., 'en' for English)"
-)
-
-# Main content
-st.markdown("---")
-
-# File uploader
-uploaded_file = st.file_uploader(
-    "📁 Upload your keyword file (CSV or Excel)",
-    type=["csv", "xlsx", "xls"],
-    help="File should contain a column with keywords"
-)
 
 def read_file(file):
     """Read CSV or Excel file and return dataframe"""
@@ -80,10 +71,11 @@ def read_file(file):
         st.error(f"Error reading file: {str(e)}")
         return None
 
+
 def validate_and_clean_keywords(keywords_list, max_words=10):
     """
     Validate and clean keywords before sending to DataForSEO API
-    - Remove invalid characters (?, !, *, etc.)
+    - Remove invalid characters
     - Skip keywords with too many words
     - Track skipped keywords and reasons
     """
@@ -104,7 +96,7 @@ def validate_and_clean_keywords(keywords_list, max_words=10):
             })
             continue
 
-        # Remove invalid characters (keep letters, numbers, spaces, hyphens, and underscores)
+        # Remove invalid characters (keep letters, numbers, spaces, hyphens, underscores)
         cleaned_keyword = re.sub(r'[^\w\s-]', '', keyword)
 
         # Remove extra spaces
@@ -127,27 +119,19 @@ def validate_and_clean_keywords(keywords_list, max_words=10):
             })
             continue
 
-        # Check if significantly different from original (warn user)
-        if cleaned_keyword.lower() != original_keyword.lower():
-            # Just track this for info, but still use the cleaned version
-            valid_keywords.append({
-                'original': original_keyword,
-                'cleaned': cleaned_keyword,
-                'modified': True
-            })
-        else:
-            valid_keywords.append({
-                'original': original_keyword,
-                'cleaned': cleaned_keyword,
-                'modified': False
-            })
+        valid_keywords.append({
+            'original': original_keyword,
+            'cleaned': cleaned_keyword,
+            'modified': cleaned_keyword.lower() != original_keyword.lower()
+        })
 
     return valid_keywords, skipped_keywords
 
-def call_dataforseo_api(keywords, login, password, location_code, language_code):
+
+def call_dataforseo_api(keywords, login, password):
     """
-    Call DataForSEO API to fetch search volume and keyword difficulty
-    Endpoint: POST https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live
+    Call DataForSEO Clickstream Global Search Volume API
+    Endpoint: POST https://api.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live
     """
     # Prepare authentication
     cred = f"{login}:{password}"
@@ -158,45 +142,89 @@ def call_dataforseo_api(keywords, login, password, location_code, language_code)
         'Content-Type': 'application/json'
     }
 
-    # Prepare request body
+    # Prepare request body - Global Search Volume returns worldwide data
     post_data = [{
-        "location_code": location_code,
-        "language_code": language_code,
         "keywords": keywords
     }]
 
-    # API endpoint
-    url = "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live"
-
     try:
-        response = requests.post(url, headers=headers, json=post_data)
+        response = requests.post(API_ENDPOINT, headers=headers, json=post_data)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"API Error: {str(e)}")
-        if hasattr(e.response, 'text'):
+        if hasattr(e, 'response') and e.response is not None:
             st.error(f"Response: {e.response.text}")
         return None
 
+
+def get_keyword_difficulty(search_volume):
+    """
+    Calculate keyword difficulty based on search volume thresholds
+    - LOW: < 1,000 monthly searches
+    - MEDIUM: 1,000 - 10,000 monthly searches
+    - HIGH: > 10,000 monthly searches
+    """
+    if search_volume is None or search_volume == 0:
+        return "N/A"
+    elif search_volume < 1000:
+        return "LOW"
+    elif search_volume <= 10000:
+        return "MEDIUM"
+    else:
+        return "HIGH"
+
+
+def extract_us_search_volume(countries_data):
+    """
+    Extract US-specific search volume from the countries breakdown
+    Returns the search volume for the United States (location_code 2840)
+    """
+    if not countries_data:
+        return None
+
+    for country in countries_data:
+        if country.get('location_code') == LOCATION_CODE:
+            return country.get('search_volume', 0)
+
+    return None
+
+
 def process_api_response(response_data):
-    """Process API response and convert to dataframe - returns only Keyword, Search Volume, and Competition"""
+    """
+    Process API response and convert to dataframe
+    Returns: Keyword, Global Search Volume, US Search Volume, Keyword Difficulty
+    """
     if not response_data or 'tasks' not in response_data:
         return None
 
     results = []
     for task in response_data.get('tasks', []):
         if task.get('status_code') == 20000:  # Success
-            for item in task.get('result', []):
-                # Only include the 3 requested fields
-                results.append({
-                    'Keyword': item.get('keyword'),
-                    'Search Volume': item.get('search_volume', 0),
-                    'Competition': item.get('competition', 'N/A')
-                })
+            for result_item in task.get('result', []):
+                items = result_item.get('items', [])
+                for item in items:
+                    keyword = item.get('keyword', '')
+                    global_search_volume = item.get('search_volume', 0) or 0
+                    countries_data = item.get('countries', [])
+
+                    # Extract US-specific search volume
+                    us_search_volume = extract_us_search_volume(countries_data)
+                    if us_search_volume is None:
+                        us_search_volume = 0
+
+                    # Calculate keyword difficulty based on US search volume
+                    keyword_difficulty = get_keyword_difficulty(us_search_volume)
+
+                    results.append({
+                        'Keyword': keyword,
+                        'Global Search Volume': global_search_volume,
+                        'US Search Volume': us_search_volume,
+                        'Keyword Difficulty': keyword_difficulty
+                    })
         else:
-            # Only show warning if it's not the specific keyword validation errors we're already handling
             status_code = task.get('status_code')
-            if status_code not in [40501]:  # Skip validation errors as we handle them
+            if status_code not in [40501]:  # Skip validation errors
                 st.warning(f"Task failed with status code: {status_code}")
                 st.warning(f"Message: {task.get('status_message')}")
 
@@ -204,73 +232,45 @@ def process_api_response(response_data):
         return pd.DataFrame(results)
     return None
 
-def create_summary_by_page(df):
-    """Create summary dataframe grouped by page/URL"""
-    # Check if 'page' column exists
-    if 'page' not in df.columns:
-        return None
 
-    # Group by page and calculate aggregations
-    summary = df.groupby('page').agg({
-        'Monthly Searches': 'sum',
-        'Clicks': 'sum',
-        'Impressions': 'sum',
-        'Avg. Position': 'mean'
-    }).reset_index()
-
-    # Calculate CTR % (Clicks / Impressions * 100)
-    summary['CTR %'] = (summary['Clicks'] / summary['Impressions'] * 100).round(2)
-
-    # Rename columns for clarity
-    summary.columns = ['Page', 'Total Monthly Searches', 'Total Clicks', 'Total Impressions', 'Avg. Position', 'CTR %']
-
-    # Round average position
-    summary['Avg. Position'] = summary['Avg. Position'].round(1)
-
-    # Sort by Total Monthly Searches descending
-    summary = summary.sort_values('Total Monthly Searches', ascending=False)
-
-    return summary
-
-def convert_df_to_excel(df, summary_df=None):
-    """Convert dataframe to Excel file with multiple sheets"""
+def convert_df_to_excel(df):
+    """Convert dataframe to Excel file"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Write main data sheet
-        df.to_excel(writer, index=False, sheet_name='All Keywords')
+        df.to_excel(writer, index=False, sheet_name='Keywords')
 
-        # Auto-adjust column width for main sheet
-        worksheet = writer.sheets['All Keywords']
+        # Auto-adjust column width
+        worksheet = writer.sheets['Keywords']
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).apply(len).max(), len(col)) + 2
             worksheet.set_column(i, i, min(max_len, 50))
 
-        # Write summary sheet if provided
-        if summary_df is not None:
-            summary_df.to_excel(writer, index=False, sheet_name='Summary by Page')
-
-            # Auto-adjust column width for summary sheet
-            summary_worksheet = writer.sheets['Summary by Page']
-            for i, col in enumerate(summary_df.columns):
-                max_len = max(summary_df[col].astype(str).apply(len).max(), len(col)) + 2
-                summary_worksheet.set_column(i, i, min(max_len, 50))
-
     return output.getvalue()
+
+
+# Main content
+st.markdown("---")
+
+# File uploader
+uploaded_file = st.file_uploader(
+    "Upload your keyword file (CSV or Excel)",
+    type=["csv", "xlsx", "xls"],
+    help="File should contain a column with keywords"
+)
 
 # Main processing logic
 if uploaded_file is not None:
-    # Read the uploaded file
     df = read_file(uploaded_file)
 
     if df is not None:
-        st.success(f"✅ File uploaded successfully! Found {len(df)} rows")
+        st.success(f"File uploaded successfully! Found {len(df)} rows")
 
         # Display the uploaded data
-        st.subheader("📊 Uploaded Data Preview")
+        st.subheader("Uploaded Data Preview")
         st.dataframe(df.head(10), use_container_width=True)
 
         # Column selection
-        st.subheader("🎯 Select Keyword Column")
+        st.subheader("Select Keyword Column")
         keyword_column = st.selectbox(
             "Choose the column containing keywords:",
             options=df.columns.tolist()
@@ -284,30 +284,29 @@ if uploaded_file is not None:
             st.write(keywords_list[:10])
 
         # Process button
-        if st.button("🚀 Fetch SEO Data", type="primary"):
-            # Get credentials
+        if st.button("Fetch Search Volume Data", type="primary"):
             login, password = get_credentials()
 
             if login and password:
-                # Validate and clean keywords first
-                st.info("🔍 Validating and cleaning keywords...")
+                # Validate and clean keywords
+                st.info("Validating and cleaning keywords...")
                 valid_keywords, skipped_keywords = validate_and_clean_keywords(keywords_list)
 
                 # Show validation results
                 if skipped_keywords:
-                    st.warning(f"⚠️ Skipped {len(skipped_keywords)} invalid keywords")
+                    st.warning(f"Skipped {len(skipped_keywords)} invalid keywords")
                     with st.expander("View skipped keywords"):
                         skipped_df = pd.DataFrame(skipped_keywords)
                         st.dataframe(skipped_df, use_container_width=True)
 
                 if not valid_keywords:
-                    st.error("❌ No valid keywords to process. Please check your file.")
+                    st.error("No valid keywords to process. Please check your file.")
                     st.stop()
 
                 # Show cleaned keywords info
                 modified_keywords = [kw for kw in valid_keywords if kw['modified']]
                 if modified_keywords:
-                    st.info(f"ℹ️ Cleaned {len(modified_keywords)} keywords (removed special characters)")
+                    st.info(f"Cleaned {len(modified_keywords)} keywords (removed special characters)")
                     with st.expander("View modified keywords"):
                         modified_df = pd.DataFrame(modified_keywords)
                         st.dataframe(modified_df[['original', 'cleaned']], use_container_width=True)
@@ -315,23 +314,22 @@ if uploaded_file is not None:
                 # Extract cleaned keywords for API call
                 cleaned_keywords_list = [kw['cleaned'] for kw in valid_keywords]
 
-                # Split keywords into batches (DataForSEO allows up to 1000 keywords per request)
-                batch_size = 1000  # DataForSEO limit: 1000 keywords per request
+                # Split keywords into batches (max 1000 per request)
                 total_keywords = len(cleaned_keywords_list)
-                num_batches = (total_keywords + batch_size - 1) // batch_size
+                num_batches = (total_keywords + BATCH_SIZE - 1) // BATCH_SIZE
 
                 if num_batches == 1:
                     st.info(f"Processing {total_keywords} keywords in a single API request...")
                 else:
-                    st.info(f"Processing {total_keywords} keywords in {num_batches} API requests (batches of {batch_size})...")
+                    st.info(f"Processing {total_keywords} keywords in {num_batches} API requests (batches of {BATCH_SIZE})...")
 
                 all_results = []
                 progress_bar = st.progress(0)
                 status_text = st.empty()
 
-                for i in range(0, total_keywords, batch_size):
-                    batch = cleaned_keywords_list[i:i + batch_size]
-                    batch_num = i // batch_size + 1
+                for i in range(0, total_keywords, BATCH_SIZE):
+                    batch = cleaned_keywords_list[i:i + BATCH_SIZE]
+                    batch_num = i // BATCH_SIZE + 1
 
                     if num_batches == 1:
                         status_text.text(f"Making API request for {len(batch)} keywords...")
@@ -339,13 +337,7 @@ if uploaded_file is not None:
                         status_text.text(f"Making API request {batch_num}/{num_batches} ({len(batch)} keywords)...")
 
                     # Call API
-                    response_data = call_dataforseo_api(
-                        batch,
-                        login,
-                        password,
-                        location_code,
-                        language_code
-                    )
+                    response_data = call_dataforseo_api(batch, login, password)
 
                     if response_data:
                         batch_df = process_api_response(response_data)
@@ -353,11 +345,11 @@ if uploaded_file is not None:
                             all_results.append(batch_df)
 
                     # Update progress
-                    progress = min((i + batch_size) / total_keywords, 1.0)
+                    progress = min((i + BATCH_SIZE) / total_keywords, 1.0)
                     progress_bar.progress(progress)
 
-                    # Rate limiting - be nice to the API
-                    if i + batch_size < total_keywords:
+                    # Rate limiting between batches
+                    if i + BATCH_SIZE < total_keywords:
                         time.sleep(1)
 
                 progress_bar.progress(1.0)
@@ -367,7 +359,7 @@ if uploaded_file is not None:
                 if all_results:
                     api_results_df = pd.concat(all_results, ignore_index=True)
 
-                    st.success(f"✅ Successfully fetched data for {len(api_results_df)} keywords!")
+                    st.success(f"Successfully fetched data for {len(api_results_df)} keywords!")
 
                     # Create mapping from original to cleaned keywords
                     keyword_mapping = pd.DataFrame([{
@@ -375,7 +367,7 @@ if uploaded_file is not None:
                         'cleaned': kw['cleaned']
                     } for kw in valid_keywords])
 
-                    # Merge API results with mapping
+                    # Merge API results with mapping to get original keywords
                     api_results_df = api_results_df.merge(
                         keyword_mapping,
                         left_on='Keyword',
@@ -383,104 +375,62 @@ if uploaded_file is not None:
                         how='left'
                     )
 
-                    # Create a copy of original dataframe
-                    merged_df = df.copy()
-
-                    # Rename the keyword column to 'query' if it's not already named that
-                    if keyword_column != 'query':
-                        merged_df = merged_df.rename(columns={keyword_column: 'query'})
-
-                    # Merge API results with original data based on query
-                    merged_df = merged_df.merge(
-                        api_results_df[['original', 'Search Volume', 'Competition']],
-                        left_on='query',
-                        right_on='original',
-                        how='left'
-                    )
-
-                    # Drop the extra 'original' column from merge
-                    if 'original' in merged_df.columns:
-                        merged_df = merged_df.drop(columns=['original'])
-
-                    # Rename API columns to match desired output format
-                    merged_df = merged_df.rename(columns={
-                        'Search Volume': 'Monthly Searches',
-                        'Competition': 'Keyword Difficulty'
-                    })
-
-                    # Reorder columns to match desired format
-                    # Expected: page, query, Monthly Searches, Keyword Difficulty, Clicks, Impressions, CTR %, Avg. Position
-                    desired_order = []
-                    if 'page' in merged_df.columns:
-                        desired_order.append('page')
-                    if 'query' in merged_df.columns:
-                        desired_order.append('query')
-
-                    # Add API columns
-                    if 'Monthly Searches' in merged_df.columns:
-                        desired_order.append('Monthly Searches')
-                    if 'Keyword Difficulty' in merged_df.columns:
-                        desired_order.append('Keyword Difficulty')
-
-                    # Add remaining columns in order
-                    for col in ['Clicks', 'Impressions', 'CTR %', 'Avg. Position']:
-                        if col in merged_df.columns:
-                            desired_order.append(col)
-
-                    # Add any remaining columns not in the list
-                    for col in merged_df.columns:
-                        if col not in desired_order:
-                            desired_order.append(col)
-
-                    merged_df = merged_df[desired_order]
-
-                    # Create summary by page (if page column exists)
-                    summary_df = None
-                    if 'page' in merged_df.columns and 'Clicks' in merged_df.columns and 'Impressions' in merged_df.columns:
-                        summary_df = create_summary_by_page(merged_df)
+                    # Create final output with original keywords
+                    final_df = api_results_df[['original', 'Global Search Volume', 'US Search Volume', 'Keyword Difficulty']].copy()
+                    final_df = final_df.rename(columns={'original': 'Keyword'})
 
                     # Display results
-                    st.subheader("📈 Results")
-                    st.dataframe(merged_df, use_container_width=True)
+                    st.subheader("Results")
+                    st.dataframe(final_df, use_container_width=True)
 
                     # Statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Keywords", len(final_df))
+                    with col2:
+                        avg_volume = final_df['US Search Volume'].mean()
+                        st.metric("Avg US Search Volume", f"{avg_volume:,.0f}")
+                    with col3:
+                        total_volume = final_df['US Search Volume'].sum()
+                        st.metric("Total US Search Volume", f"{total_volume:,.0f}")
+                    with col4:
+                        high_diff = len(final_df[final_df['Keyword Difficulty'] == 'HIGH'])
+                        st.metric("High Difficulty Keywords", high_diff)
+
+                    # Difficulty breakdown
+                    st.subheader("Keyword Difficulty Breakdown")
+                    difficulty_counts = final_df['Keyword Difficulty'].value_counts()
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Total Keywords", len(merged_df))
+                        low_count = difficulty_counts.get('LOW', 0)
+                        st.metric("LOW (< 1K)", low_count)
                     with col2:
-                        avg_volume = merged_df['Monthly Searches'].mean()
-                        st.metric("Avg Monthly Searches", f"{avg_volume:,.0f}")
+                        med_count = difficulty_counts.get('MEDIUM', 0)
+                        st.metric("MEDIUM (1K-10K)", med_count)
                     with col3:
-                        total_volume = merged_df['Monthly Searches'].sum()
-                        st.metric("Total Monthly Searches", f"{total_volume:,.0f}")
-
-                    # Show summary if available
-                    if summary_df is not None:
-                        st.subheader("📊 Summary by Page")
-                        st.dataframe(summary_df, use_container_width=True)
+                        high_count = difficulty_counts.get('HIGH', 0)
+                        st.metric("HIGH (> 10K)", high_count)
 
                     # Download buttons
-                    st.subheader("💾 Download Results")
+                    st.subheader("Download Results")
 
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        # CSV download (main data only)
-                        csv = merged_df.to_csv(index=False).encode('utf-8')
+                        csv = final_df.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            label="📥 Download as CSV",
+                            label="Download as CSV",
                             data=csv,
-                            file_name="seo_keywords_results.csv",
+                            file_name="keyword_search_volume.csv",
                             mime="text/csv"
                         )
 
                     with col2:
-                        # Excel download (with both sheets)
-                        excel_data = convert_df_to_excel(merged_df, summary_df)
+                        excel_data = convert_df_to_excel(final_df)
                         st.download_button(
-                            label="📥 Download as Excel (with Summary)",
+                            label="Download as Excel",
                             data=excel_data,
-                            file_name="seo_keywords_results.xlsx",
+                            file_name="keyword_search_volume.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                 else:
@@ -488,59 +438,44 @@ if uploaded_file is not None:
 
 else:
     # Instructions when no file is uploaded
-    st.info("👆 Upload a file to get started")
+    st.info("Upload a file to get started")
 
     st.markdown("""
-    ### 📝 Instructions:
+    ### Instructions:
 
-    1. **Prepare your file**: Upload a CSV or Excel file from Google Search Console with these columns:
-       - `page` - Landing page URL
-       - `query` - Search keyword
-       - `Clicks` - Number of clicks
-       - `Impressions` - Number of impressions
-       - `CTR %` - Click-through rate
-       - `Avg. Position` - Average position in search results
+    1. **Prepare your file**: Create a CSV or Excel file with a column containing keywords
 
     2. **Configure API credentials**: Add your DataForSEO credentials in Streamlit Secrets
 
     3. **Upload the file**: Use the file uploader above
 
-    4. **Select keyword column**: Choose the column containing your keywords (usually "query")
+    4. **Select keyword column**: Choose the column containing your keywords
 
-    5. **Fetch data**: Click the button to retrieve SEO metrics
+    5. **Fetch data**: Click the button to retrieve search volume data
 
-    6. **Download results**: Export your enriched data with two sheets:
-       - **All Keywords**: Original data + Monthly Searches + Keyword Difficulty
-       - **Summary by Page**: Aggregated metrics per landing page
+    ### Output Data:
 
-    ### 📊 Output Data:
+    | Column | Description |
+    |--------|-------------|
+    | Keyword | Your original keyword |
+    | Global Search Volume | Worldwide clickstream search volume |
+    | US Search Volume | United States clickstream search volume |
+    | Keyword Difficulty | LOW (< 1K), MEDIUM (1K-10K), HIGH (> 10K) |
 
-    **Sheet 1 - All Keywords:**
-    - All original columns from your file
-    - **Monthly Searches**: Search volume from DataForSEO API
-    - **Keyword Difficulty**: Competition level (LOW, MEDIUM, HIGH)
+    ### API Limits:
 
-    **Sheet 2 - Summary by Page:**
-    - **Page**: Landing page URL
-    - **Total Monthly Searches**: Sum of all keywords for this page
-    - **Total Clicks**: Sum of all clicks
-    - **Total Impressions**: Sum of all impressions
-    - **Avg. Position**: Average ranking position
-    - **CTR %**: Calculated from clicks/impressions
+    - **1,000 keywords** per API request (automatically batched)
+    - **2,000 API calls** per minute maximum
+    - **30 simultaneous requests** maximum
 
-    ### ⚠️ Keyword Requirements:
-    - Maximum 10 words per keyword
-    - Special characters (?, !, *, etc.) will be automatically removed
-    - Keywords with invalid format will be skipped with a warning
-
-    ### 🔗 DataForSEO API Documentation:
-    [View API Documentation](https://docs.dataforseo.com/v3/keywords_data/google_ads/search_volume/live/)
+    ### API Documentation:
+    [DataForSEO Clickstream Global Search Volume](https://docs.dataforseo.com/v3/keywords_data/clickstream_data/global_search_volume/live/)
     """)
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666;'>
-    <p>Powered by DataForSEO API | Built with Streamlit</p>
+    <p>Powered by DataForSEO Clickstream Data API</p>
 </div>
 """, unsafe_allow_html=True)
