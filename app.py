@@ -332,57 +332,60 @@ if uploaded_file is not None:
 
         # Show preview of selected keywords
         keywords_list = df[keyword_column].dropna().astype(str).tolist()
-        st.info(f"Found {len(keywords_list)} keywords")
 
-        with st.expander("Preview keywords (first 10)"):
-            st.write(keywords_list[:10])
+        # Validate and analyze keywords immediately
+        valid_keywords, skipped_keywords, duplicate_keywords = validate_and_clean_keywords(keywords_list)
+        cleaned_keywords_list = [kw['cleaned'] for kw in valid_keywords]
+        total_keywords = len(cleaned_keywords_list)
+        num_batches = (total_keywords + BATCH_SIZE - 1) // BATCH_SIZE
+
+        # Show keyword analysis summary
+        st.subheader("Keyword Analysis")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total in File", f"{len(keywords_list):,}")
+        with col2:
+            st.metric("Duplicates Removed", f"{len(duplicate_keywords):,}")
+        with col3:
+            st.metric("Invalid/Skipped", f"{len(skipped_keywords):,}")
+        with col4:
+            st.metric("Unique Keywords", f"{total_keywords:,}")
+
+        # Show details in expanders
+        if duplicate_keywords:
+            with st.expander(f"View {len(duplicate_keywords):,} duplicate keywords"):
+                dup_df = pd.DataFrame(duplicate_keywords)
+                st.dataframe(dup_df, use_container_width=True)
+
+        if skipped_keywords:
+            with st.expander(f"View {len(skipped_keywords):,} skipped keywords"):
+                skipped_df = pd.DataFrame(skipped_keywords)
+                st.dataframe(skipped_df, use_container_width=True)
+
+        modified_keywords = [kw for kw in valid_keywords if kw['modified']]
+        if modified_keywords:
+            with st.expander(f"View {len(modified_keywords):,} cleaned keywords"):
+                modified_df = pd.DataFrame(modified_keywords)
+                st.dataframe(modified_df[['original', 'cleaned']], use_container_width=True)
+
+        with st.expander("Preview unique keywords (first 10)"):
+            st.write(cleaned_keywords_list[:10])
+
+        if not valid_keywords:
+            st.error("No valid keywords to process. Please check your file.")
+            st.stop()
+
+        # Show batch info
+        if num_batches > 1:
+            st.info(f"Will process {total_keywords:,} unique keywords in {num_batches} API batches")
+        else:
+            st.info(f"Will process {total_keywords:,} unique keywords in 1 API batch")
 
         # Process button
         if st.button("Fetch Search Volume Data", type="primary"):
             login, password = get_credentials()
 
             if login and password:
-                # Validate and clean keywords
-                st.info("Validating and cleaning keywords...")
-                valid_keywords, skipped_keywords, duplicate_keywords = validate_and_clean_keywords(keywords_list)
-
-                # Show duplicate keywords info
-                if duplicate_keywords:
-                    st.warning(f"Removed {len(duplicate_keywords)} duplicate keywords")
-                    with st.expander("View duplicate keywords"):
-                        dup_df = pd.DataFrame(duplicate_keywords)
-                        st.dataframe(dup_df, use_container_width=True)
-
-                # Show validation results
-                if skipped_keywords:
-                    st.warning(f"Skipped {len(skipped_keywords)} invalid keywords")
-                    with st.expander("View skipped keywords"):
-                        skipped_df = pd.DataFrame(skipped_keywords)
-                        st.dataframe(skipped_df, use_container_width=True)
-
-                if not valid_keywords:
-                    st.error("No valid keywords to process. Please check your file.")
-                    st.stop()
-
-                # Show cleaned keywords info
-                modified_keywords = [kw for kw in valid_keywords if kw['modified']]
-                if modified_keywords:
-                    st.info(f"Cleaned {len(modified_keywords)} keywords (removed special characters)")
-                    with st.expander("View modified keywords"):
-                        modified_df = pd.DataFrame(modified_keywords)
-                        st.dataframe(modified_df[['original', 'cleaned']], use_container_width=True)
-
-                # Extract cleaned keywords for API call
-                cleaned_keywords_list = [kw['cleaned'] for kw in valid_keywords]
-
-                # Split keywords into batches (max 1000 per request)
-                total_keywords = len(cleaned_keywords_list)
-                num_batches = (total_keywords + BATCH_SIZE - 1) // BATCH_SIZE
-
-                st.info(f"Processing {total_keywords} unique keywords...")
-                if num_batches > 1:
-                    st.info(f"Using {num_batches} batches of up to {BATCH_SIZE} keywords each")
-
                 all_clickstream_results = []
                 all_competition_data = {}
                 progress_bar = st.progress(0)
