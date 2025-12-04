@@ -173,13 +173,7 @@ def call_google_ads_api(keywords, login, password):
     try:
         response = requests.post(GOOGLE_ADS_API_ENDPOINT, headers=headers, json=post_data)
         response.raise_for_status()
-        result = response.json()
-
-        # Debug: Show API response status
-        if result.get('status_code') != 20000:
-            st.error(f"API Status: {result.get('status_code')} - {result.get('status_message')}")
-
-        return result
+        return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Google Ads API Error: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
@@ -213,6 +207,10 @@ def process_google_ads_response(response_data):
     - Keyword
     - Last month's search volume (US)
     - Competition level (keyword difficulty)
+
+    API Response structure:
+    tasks[].result[] - array of keyword objects directly
+    Each keyword object has: keyword, competition, search_volume, monthly_searches, etc.
     """
     if not response_data:
         st.error("No response data received from API")
@@ -220,41 +218,35 @@ def process_google_ads_response(response_data):
 
     if 'tasks' not in response_data:
         st.error(f"No 'tasks' in response. Response keys: {list(response_data.keys())}")
-        st.error(f"Full response: {response_data}")
         return None
 
     results = []
     for task in response_data.get('tasks', []):
         task_status = task.get('status_code')
         if task_status == 20000:  # Success
-            task_result = task.get('result')
+            # result is directly an array of keyword objects
+            task_result = task.get('result', [])
             if not task_result:
                 st.warning("Task succeeded but result is empty")
                 continue
 
-            for result_item in task_result:
-                items = result_item.get('items', [])
-                if not items:
-                    st.warning("Result item has no items")
-                    continue
+            for item in task_result:
+                keyword = item.get('keyword', '')
 
-                for item in items:
-                    keyword = item.get('keyword', '')
+                # Get the most recent month's search volume
+                monthly_searches = item.get('monthly_searches', [])
+                last_month_volume = get_latest_monthly_search_volume(monthly_searches)
 
-                    # Get the most recent month's search volume
-                    monthly_searches = item.get('monthly_searches', [])
-                    last_month_volume = get_latest_monthly_search_volume(monthly_searches)
+                # Get competition level (keyword difficulty)
+                competition = item.get('competition', None)
+                if not competition:
+                    competition = 'N/A'
 
-                    # Get competition level (keyword difficulty)
-                    competition = item.get('competition', None)
-                    if not competition:
-                        competition = 'N/A'
-
-                    results.append({
-                        'Keyword': keyword,
-                        'US Search Volume (Last Month)': last_month_volume,
-                        'Keyword Difficulty': competition
-                    })
+                results.append({
+                    'Keyword': keyword,
+                    'US Search Volume (Last Month)': last_month_volume,
+                    'Keyword Difficulty': competition
+                })
         else:
             st.error(f"Task failed with status code: {task_status}")
             st.error(f"Message: {task.get('status_message')}")
